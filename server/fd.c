@@ -160,6 +160,7 @@ struct fd
     unsigned int         comp_flags;  /* completion flags */
     int                  esync_fd;    /* esync file descriptor */
     unsigned int         fsync_idx;   /* fsync shm index */
+    struct fast_sync    *fast_sync;   /* fast synchronization object */
 };
 
 static void fd_dump( struct object *obj, int verbose );
@@ -1585,6 +1586,7 @@ static void fd_destroy( struct object *obj )
     if (do_esync())
         close( fd->esync_fd );
     if (fd->fsync_idx) fsync_free_shm_idx( fd->fsync_idx );
+    if (fd->fast_sync) release_object( fd->fast_sync );
 }
 
 /* check if the desired access is possible without violating */
@@ -1705,6 +1707,7 @@ static struct fd *alloc_fd_object(void)
     fd->comp_flags = 0;
     fd->esync_fd   = -1;
     fd->fsync_idx  = 0;
+    fd->fast_sync  = NULL;
     init_async_queue( &fd->read_q );
     init_async_queue( &fd->write_q );
     init_async_queue( &fd->wait_q );
@@ -1751,6 +1754,7 @@ struct fd *alloc_pseudo_fd( const struct fd_ops *fd_user_ops, struct object *use
     fd->poll_index = -1;
     fd->completion = NULL;
     fd->comp_flags = 0;
+    fd->fast_sync  = NULL;
     fd->no_fd_status = STATUS_BAD_DEVICE_TYPE;
     fd->esync_fd   = -1;
     fd->fsync_idx  = 0;
@@ -2243,7 +2247,15 @@ void set_fd_signaled( struct fd *fd, int signaled )
 {
     if (fd->comp_flags & FILE_SKIP_SET_EVENT_ON_HANDLE) return;
     fd->signaled = signaled;
-    if (signaled) wake_up( fd->user, 0 );
+    if (signaled)
+    {
+        wake_up( fd->user, 0 );
+        fast_set_event( fd->fast_sync );
+    }
+    else
+    {
+        fast_reset_event( fd->fast_sync );
+    }
 
     if (do_fsync() && !signaled)
         fsync_clear( fd->user );
@@ -2290,6 +2302,18 @@ unsigned int default_fd_get_fsync_idx( struct object *obj, enum fsync_type *type
     unsigned int ret = fd->fsync_idx;
     *type = FSYNC_MANUAL_SERVER;
     release_object( fd );
+    return ret;
+}
+struct fast_sync *default_fd_get_fast_sync( struct object *obj )
+{
+    struct fd *fd = get_obj_fd( obj );
+    struct fast_sync *ret;
+
+    if (!fd->fast_sync)
+        fd->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, fd->signaled );
+    ret = fd->fast_sync;
+    release_object( fd );
+    if (ret) grab_object( ret );
     return ret;
 }
 
