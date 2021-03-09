@@ -215,6 +215,7 @@ extern unsigned int server_select( const select_op_t *select_op, data_size_t siz
 extern unsigned int server_wait( const select_op_t *select_op, data_size_t size, UINT flags,
                                  const LARGE_INTEGER *timeout );
 extern NTSTATUS wait_internal_server( HANDLE handle, BOOLEAN alertable, const LARGE_INTEGER *timeout );
+extern unsigned int server_wait_for_object( HANDLE handle, BOOL alertable, const LARGE_INTEGER *timeout );
 extern unsigned int server_queue_process_apc( HANDLE process, const apc_call_t *call,
                                               apc_result_t *result );
 extern int server_get_unix_fd( HANDLE handle, unsigned int wanted_access, int *unix_fd,
@@ -456,7 +457,8 @@ static inline async_data_t server_async( HANDLE handle, struct async_fileio *use
 
 static inline NTSTATUS wait_async( HANDLE handle, BOOL alertable )
 {
-    return wait_internal_server( handle, alertable, NULL );
+    // FIXME cherry-pick: This stubs esync/fsync
+    return server_wait_for_object( handle, alertable, NULL );
 }
 
 static inline BOOL in_wow64_call(void)
