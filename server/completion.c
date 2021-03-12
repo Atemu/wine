@@ -81,6 +81,7 @@ struct completion
     int            closed;
     int                esync_fd;
     unsigned int       fsync_idx;
+    struct fast_sync *fast_sync;
 };
 
 static void completion_wait_dump( struct object*, int );
@@ -169,6 +170,7 @@ static int completion_signaled( struct object *obj, struct wait_queue_entry *ent
 static int completion_get_esync_fd( struct object *obj, enum esync_type *type );
 static unsigned int completion_get_fsync_idx( struct object *obj, enum fsync_type *type );
 static int completion_close_handle( struct object *obj, struct process *process, obj_handle_t handle );
+static struct fast_sync *completion_get_fast_sync( struct object *obj );
 static void completion_destroy( struct object * );
 
 static const struct object_ops completion_ops =
@@ -193,7 +195,7 @@ static const struct object_ops completion_ops =
     default_unlink_name,       /* unlink_name */
     no_open_file,              /* open_file */
     no_kernel_obj_list,        /* get_kernel_obj_list */
-    no_get_fast_sync,          /* get_fast_sync */
+    completion_get_fast_sync,  /* get_fast_sync */
     completion_close_handle,   /* close_handle */
     completion_destroy         /* destroy */
 };
@@ -210,6 +212,7 @@ static void completion_destroy( struct object *obj)
     {
         free( tmp );
     }
+    if (completion->fast_sync) release_object( completion->fast_sync );
 }
 
 static void completion_dump( struct object *obj, int verbose )
@@ -298,6 +301,16 @@ static struct completion_wait *create_completion_wait( struct completion *comple
     return wait;
 }
 
+static struct fast_sync *completion_get_fast_sync( struct object *obj )
+{
+    struct completion *completion = (struct completion *)obj;
+
+    if (!completion->fast_sync)
+        completion->fast_sync = fast_create_event( FAST_SYNC_MANUAL_SERVER, !list_empty( &completion->queue ) );
+    if (completion->fast_sync) grab_object( completion->fast_sync );
+    return completion->fast_sync;
+}
+
 static struct completion *create_completion( struct object *root, const struct unicode_str *name,
                                              unsigned int attr, unsigned int concurrent,
                                              const struct security_descriptor *sd )
@@ -312,6 +325,7 @@ static struct completion *create_completion( struct object *root, const struct u
             list_init( &completion->wait_queue );
             completion->depth = 0;
             completion->closed = 0;
+            completion->fast_sync = NULL;
         }
     }
     if (do_esync()) completion->esync_fd = esync_create_fd( 0, 0 );
@@ -347,6 +361,8 @@ void add_completion( struct completion *completion, apc_param_t ckey, apc_param_
         if (list_empty( &completion->queue )) return;
     }
     if (!list_empty( &completion->queue )) wake_up( &completion->obj, 0 );
+    wake_up( &completion->obj, 1 );
+    fast_set_event( completion->fast_sync );
 }
 
 /* create a completion */
@@ -432,6 +448,7 @@ DECL_HANDLER(remove_completion)
         {
             if (do_esync()) esync_clear( completion->esync_fd );
             if (do_fsync()) fsync_clear( &completion->obj );
+            fast_reset_event( completion->fast_sync );
         }
     }
 
