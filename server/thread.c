@@ -316,6 +316,7 @@ static inline void init_thread_structure( struct thread *thread )
     thread->input_shared_mapping = NULL;
     thread->input_shared         = NULL;
     thread->fast_sync       = NULL;
+    thread->fast_alert_event = NULL;
 
     thread->creation_time = current_time;
     thread->exit_time     = 0;
@@ -621,6 +622,7 @@ static void destroy_thread( struct object *obj )
         fsync_free_shm_idx( thread->fsync_apc_idx );
     }
     if (thread->fast_sync) release_object( thread->fast_sync );
+    if (thread->fast_alert_event) release_object( thread->fast_alert_event );
 }
 
 /* dump a thread on stdout for debugging purposes */
@@ -1398,6 +1400,8 @@ static int queue_apc( struct process *process, struct thread *thread, struct thr
 
         if (do_esync() && queue == &thread->user_apc)
             esync_wake_fd( thread->esync_apc_fd );
+        if (apc->call.type == APC_USER && thread->fast_alert_event)
+            set_event( thread->fast_alert_event );
     }
 
     return 1;
@@ -1430,6 +1434,8 @@ void thread_cancel_apc( struct thread *thread, struct object *owner, enum apc_ty
         apc->executed = 1;
         wake_up( &apc->obj, 0 );
         release_object( apc );
+        if (list_empty( &thread->user_apc ) && thread->fast_alert_event)
+            reset_event( thread->fast_alert_event );
         return;
     }
 }
@@ -1444,6 +1450,9 @@ static struct thread_apc *thread_dequeue_apc( struct thread *thread, int system 
     {
         apc = LIST_ENTRY( ptr, struct thread_apc, entry );
         list_remove( ptr );
+
+        if (list_empty( &thread->user_apc ) && thread->fast_alert_event)
+            reset_event( thread->fast_alert_event );
     }
 
     if (do_fsync() && list_empty( &thread->system_apc ) && list_empty( &thread->user_apc ))
@@ -2320,4 +2329,13 @@ DECL_HANDLER(get_next_thread)
     }
     set_error( STATUS_NO_MORE_ENTRIES );
     release_object( process );
+}
+
+DECL_HANDLER(get_fast_alert_event)
+{
+    if (!current->fast_alert_event)
+        current->fast_alert_event = create_event( NULL, NULL, 0, 1, !list_empty( &current->user_apc ), NULL );
+
+    if (current->fast_alert_event)
+        reply->handle = alloc_handle( current->process, current->fast_alert_event, SYNCHRONIZE, 0 );
 }
