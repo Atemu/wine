@@ -63,6 +63,8 @@ static const struct object_ops linux_device_ops =
     no_add_queue,                       /* add_queue */
     NULL,                               /* remove_queue */
     NULL,                               /* signaled */
+    NULL,                               /* get_esync_fd */
+    NULL,                               /* get_fsync_idx */
     NULL,                               /* satisfied */
     no_signal,                          /* signal */
     linux_device_get_fd,                /* get_fd */
@@ -196,6 +198,8 @@ static const struct object_ops linux_obj_ops =
     no_add_queue,               /* add_queue */
     NULL,                       /* remove_queue */
     NULL,                       /* signaled */
+    NULL,                       /* get_esync_fd */
+    NULL,                       /* get_fsync_idx */
     NULL,                       /* satisfied */
     no_signal,                  /* signal */
     linux_obj_get_fd,           /* get_fd */
